@@ -1,0 +1,236 @@
+
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // =====================================
+    // AUTHENTICATION HELPERS
+    // =====================================
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return signedIn() &&
+        request.auth.token.admin == true;
+    }
+
+    function isOwner(userId) {
+      return signedIn() &&
+        request.auth.uid == userId;
+    }
+
+    // =====================================
+    // USER PROFILE VALIDATION
+    // =====================================
+
+    function validUserCreate(userId) {
+      return signedIn()
+        && request.auth.uid == userId
+        && request.resource.data.keys().hasAll([
+          'email',
+          'xp',
+          'role',
+          'createdAt'
+        ])
+        && request.resource.data.keys().hasOnly([
+          'email',
+          'xp',
+          'role',
+          'createdAt'
+        ])
+        && request.resource.data.email == request.auth.token.email
+        && request.resource.data.xp == 0
+        && request.resource.data.role == 'user'
+        && request.resource.data.createdAt is timestamp;
+    }
+
+    // =====================================
+    // SCENARIO VALIDATION
+    // =====================================
+
+    function validScenarioFields() {
+      return request.resource.data.title is string
+        && request.resource.data.title.size() >= 10
+        && request.resource.data.title.size() <= 200
+
+        && request.resource.data.description is string
+        && request.resource.data.description.size() >= 50
+        && request.resource.data.description.size() <= 2000
+
+        && request.resource.data.category in [
+          'workplace',
+          'conflict_resolution',
+          'communication',
+          'leadership',
+          'ethical_dilemmas',
+          'crisis_management',
+          'daily_life'
+        ]
+
+        && request.resource.data.level in [
+          'beginner',
+          'intermediate',
+          'advanced'
+        ]
+
+        && request.resource.data.base_xp is number
+        && request.resource.data.base_xp >= 1
+        && request.resource.data.base_xp <= 100
+
+        && request.resource.data.guidance is string
+        && request.resource.data.is_public is bool
+
+        && request.resource.data.created_by is string
+        && request.resource.data.created_by_email is string
+        && request.resource.data.createdAt is timestamp;
+    }
+
+    function validScenarioCreate() {
+      return signedIn()
+
+        && request.resource.data.keys().hasAll([
+          'title',
+          'description',
+          'category',
+          'level',
+          'base_xp',
+          'guidance',
+          'is_public',
+          'created_by',
+          'created_by_email',
+          'createdAt'
+        ])
+
+        && request.resource.data.keys().hasOnly([
+          'title',
+          'description',
+          'category',
+          'level',
+          'base_xp',
+          'guidance',
+          'is_public',
+          'created_by',
+          'created_by_email',
+          'createdAt',
+          'cloned_from'
+        ])
+
+        && request.resource.data.created_by == request.auth.uid
+        && request.resource.data.created_by_email == request.auth.token.email
+        && validScenarioFields()
+
+        && (
+          !('cloned_from' in request.resource.data)
+          || request.resource.data.cloned_from == null
+          || request.resource.data.cloned_from is string
+        );
+    }
+
+    function validScenarioUpdate() {
+      return request.resource.data.created_by == resource.data.created_by
+        && request.resource.data.created_by_email == resource.data.created_by_email
+        && request.resource.data.createdAt == resource.data.createdAt
+
+        && request.resource.data.diff(resource.data)
+          .affectedKeys()
+          .hasOnly([
+            'title',
+            'description',
+            'category',
+            'level',
+            'base_xp',
+            'guidance',
+            'is_public',
+            'updatedAt'
+          ])
+
+        && validScenarioFields();
+    }
+
+    // =====================================
+    // USERS COLLECTION
+    // =====================================
+
+    match /users/{userId} {
+
+      // Users can retrieve their own profile.
+      // Administrators can retrieve all profiles.
+      allow get: if isAdmin() || isOwner(userId);
+
+      // Only administrators can query the entire collection.
+      allow list: if isAdmin();
+
+      // Users can create only their own initial profile.
+      allow create: if validUserCreate(userId);
+
+      // XP and role are protected from browser-side changes.
+      // Trusted Firebase Admin SDK operations bypass these rules.
+      allow update, delete: if false;
+    }
+
+    // =====================================
+    // SCENARIOS COLLECTION
+    // =====================================
+
+    match /scenarios/{scenarioId} {
+
+      // Public scenarios are readable by everyone.
+      // Private scenarios are readable by their owner or admins.
+      allow get: if
+        isAdmin()
+        || resource.data.is_public == true
+        || isOwner(resource.data.created_by);
+
+      allow list: if
+        isAdmin()
+        || resource.data.is_public == true
+        || isOwner(resource.data.created_by);
+
+      // Authenticated users can create scenarios
+      // only under their own UID.
+      allow create: if validScenarioCreate();
+
+      // Owners and admins can edit allowed fields.
+      // Ownership and original creation information remain immutable.
+      allow update: if
+        (isAdmin() || isOwner(resource.data.created_by))
+        && validScenarioUpdate();
+
+      // Owners can delete their scenarios.
+      // Administrators can delete any scenario.
+      allow delete: if
+        isAdmin()
+        || isOwner(resource.data.created_by);
+    }
+
+    // =====================================
+    // RESPONSES COLLECTION
+    // =====================================
+
+    match /responses/{responseId} {
+
+      // Users can read their own responses.
+      // Administrators can read all responses.
+      allow get, list: if
+        isAdmin()
+        || isOwner(resource.data.user_id);
+
+      // Responses are created by the trusted backend only.
+      allow create, update: if false;
+
+      // Only administrators can delete responses.
+      allow delete: if isAdmin();
+    }
+
+    // =====================================
+    // DEFAULT DENY
+    // =====================================
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
