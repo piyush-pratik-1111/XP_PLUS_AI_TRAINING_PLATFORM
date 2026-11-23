@@ -384,8 +384,8 @@ After signup:
 
 # 👤 Author
 
-**Adhisha Walia**
-B.Tech CSE | MIT Bangalore
+**Piyush Pratik**
+B.Tech CSE | DSATM Bangalore
 
 ---
 
